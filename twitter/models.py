@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional, Any
 from datetime import datetime, timedelta
+from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -34,15 +34,16 @@ class Media(BaseModel):
 
 class User(BaseModel):
     # fmt: off
-    twitter_id:              int      | None = None
-    username:        str      | None = None
-    name:            str      | None = None  # 50
-    created_at:      datetime | None = None
-    description:     str      | None = None  # 160
-    location:        str      | None = None  # 30
-    followers_count: int      | None = None
-    friends_count:   int      | None = None
-    raw_data:        dict     | None = None
+    twitter_id: int | None = None
+    username: str | None = None
+    name: str | None = None  # 50
+    created_at: datetime | None = None
+    description: str | None = None  # 160
+    location: str | None = None  # 30
+    followers_count: int | None = None
+    friends_count: int | None = None
+    raw_data: dict | None = None
+
     # fmt: on
 
     def __str__(self):
@@ -74,32 +75,32 @@ class User(BaseModel):
 
 class Tweet(BaseModel):
     # fmt: off
-    id:              int
-    text:            str
-    language:        str
-    created_at:      datetime
+    id: int
+    text: str
+    language: str
+    created_at: datetime
 
     conversation_id: int
 
-    quoted:          bool
-    retweeted:       bool
-    bookmarked:      bool
-    favorited:       bool
+    quoted: bool
+    retweeted: bool
+    bookmarked: bool
+    favorited: bool
 
-    quote_count:     int
-    retweet_count:   int
-    bookmark_count:  int
-    favorite_count:  int
-    reply_count:     int
-    views:           int | None = None
+    quote_count: int
+    retweet_count: int
+    bookmark_count: int
+    favorite_count: int
+    reply_count: int
+    views: int | None = None
 
-    quoted_tweet:    Optional["Tweet"] = None
+    quoted_tweet: Optional["Tweet"] = None
     retweeted_tweet: Optional["Tweet"] = None
 
-    user:            User
-    url:             str
+    user: User
+    url: str
 
-    raw_data:        dict
+    raw_data: dict
 
     # TODO hashtags
     # TODO media

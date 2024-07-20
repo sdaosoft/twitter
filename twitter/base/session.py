@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from curl_cffi import requests
 from better_proxy import Proxy
 

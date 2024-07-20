@@ -1,10 +1,11 @@
+from __future__ import annotations
+
 import asyncio
 import email as emaillib
 import imaplib
-import os
-import time
-from datetime import datetime, timezone, timedelta
 import logging
+import time
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -107,23 +108,22 @@ class EmailClient:
             self.imap.close()
             raise e
 
-
 # async def test():
 #     now_time = datetime.now(timezone.utc) - timedelta(seconds=30) # Look from 30 seconds ago
 #     print("Searching from: ", now_time)
 #     wait_email_code = int(os.getenv("TWS_WAIT_EMAIL_CODE", os.getenv("LOGIN_CODE_TIMEOUT", 30)))
 #     client = EmailClient("....", "...", wait_email_code)
 #     await client.login()
-    
+
 #     print("Logged in")
 #     code = await client.get_email_code(now_time)
-    
+
 #     print("Code is", code)
-    
+
 #     return code
 
 
 # if __name__ == "__main__":
 #     import asyncio
-    
+
 #     asyncio.run(test())

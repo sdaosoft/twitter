@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Sequence, Iterable
 
@@ -11,14 +13,15 @@ from .models import User
 
 class Account(User):
     # fmt: off
-    auth_token:  str | None = Field(default=None, pattern=r"^[a-f0-9]{40}$")
-    ct0:         str | None = None  # 160
-    password:    str | None = None  # 128
-    email:       str | None = None  # 254
-    email_password:       str | None = None  # 254
+    auth_token: str | None = Field(default=None, pattern=r"^[a-f0-9]{40}$")
+    ct0: str | None = None  # 160
+    password: str | None = None  # 128
+    email: str | None = None  # 254
+    email_password: str | None = None  # 254
     totp_secret: str | None = None  # 16
     backup_code: str | None = None  # 12
     status: AccountStatus = AccountStatus.UNKNOWN
+
     # fmt: on
 
     @property

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from bs4 import BeautifulSoup
 
 
@@ -22,7 +24,7 @@ def parse_oauth_html(html: str) -> tuple[str | None, str | None, str | None]:
 
 
 def parse_unlock_html(
-    html: str,
+        html: str,
 ) -> tuple[str | None, str | None, bool, bool, bool, bool]:
     """
     :return: authenticity_token, assignment_token, needs_unlock, start_button, finish_button, delete_button
