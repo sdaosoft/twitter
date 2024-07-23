@@ -25,7 +25,7 @@ def parse_oauth_html(html: str) -> tuple[str | None, str | None, str | None]:
 
 def parse_unlock_html(
         html: str,
-) -> tuple[str | None, str | None, bool, bool, bool, bool]:
+) -> tuple[str | None, str | None, bool, bool, bool, bool, bool]:
     """
     :return: authenticity_token, assignment_token, needs_unlock, start_button, finish_button, delete_button
     """
@@ -43,10 +43,12 @@ def parse_unlock_html(
     start_button = bool(soup.find("input", value="Start"))
     finish_button = bool(soup.find("input", value="Continue to X"))
     delete_button = bool(soup.find("input", value="Delete"))
+    email_unlock = bool(soup.find("input", value="Send email"))
     return (
         authenticity_token,
         assignment_token,
         needs_unlock,
+        email_unlock,
         start_button,
         finish_button,
         delete_button,

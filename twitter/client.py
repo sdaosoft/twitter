@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from typing import Any, Literal, Iterable
 from time import time
 import asyncio
@@ -13,6 +13,7 @@ from curl_cffi import requests
 
 from yarl import URL
 
+from cexceptions import TwitterAccountBanned, EmailLoginError
 from ._capsolver.fun_captcha import FunCaptcha, FunCaptchaTypeEnm
 
 from .errors import (
@@ -34,7 +35,8 @@ from .errors import (
 )
 from .base import BaseHTTPClient
 from .account import AccountStatus
-from database.twitter import TwitterAccount as Account
+from database.twitter import TwitterAccount as Account, TwitterAccountStatus
+from database.email import EmailAccountStatus
 from .models import User, Tweet, Media, Subtask
 from .utils import (
     parse_oauth_html,
@@ -1453,6 +1455,7 @@ class Client(BaseHTTPClient):
             authenticity_token: str,
             assignment_token: str,
             verification_string: str = None,
+            token: str = None,
     ) -> tuple[requests.Response, str]:
         payload = {
             "authenticity_token": authenticity_token,
@@ -1460,6 +1463,10 @@ class Client(BaseHTTPClient):
             "lang": "en",
             "flow": "",
         }
+
+        if token:
+            payload['token'] = token
+
         if verification_string:
             payload["verification_string"] = verification_string
             payload["language_code"] = "en"
@@ -1477,6 +1484,7 @@ class Client(BaseHTTPClient):
             authenticity_token,
             assignment_token,
             needs_unlock,
+            email_unlock,
             start_button,
             finish_button,
             delete_button,
@@ -1491,6 +1499,7 @@ class Client(BaseHTTPClient):
                 authenticity_token,
                 assignment_token,
                 needs_unlock,
+                email_unlock,
                 start_button,
                 finish_button,
                 delete_button,
@@ -1504,6 +1513,48 @@ class Client(BaseHTTPClient):
                 authenticity_token,
                 assignment_token,
                 needs_unlock,
+                email_unlock,
+                start_button,
+                finish_button,
+                delete_button,
+            ) = parse_unlock_html(html)
+
+        if email_unlock:
+            if self.account.email is None or self.account.email.status == EmailAccountStatus.BANNED:
+                self.account.status = TwitterAccountStatus.EMAIL_LOGIN_ERROR
+                raise TwitterAccountBanned('Для разлока требуется почта, а она в бане')
+
+            response, html = await self._confirm_unlock(
+                authenticity_token, assignment_token
+            )
+            (
+                authenticity_token,
+                assignment_token,
+                needs_unlock,
+                email_unlock,
+                start_button,
+                finish_button,
+                delete_button,
+            ) = parse_unlock_html(html)
+
+            await sleep(40)
+            try:
+                code = await self.email_client.search_match(
+                    from_email='verify@x.com',
+                    regex_pattern=r"\b\d{6}\b"
+                )
+            except EmailLoginError:
+                self.account.status = TwitterAccountStatus.EMAIL_LOGIN_ERROR
+                raise TwitterAccountBanned('Почта не доступна для разлока')
+
+            response, html = await self._confirm_unlock(
+                authenticity_token, assignment_token, token=code)
+
+            (
+                authenticity_token,
+                assignment_token,
+                needs_unlock,
+                email_unlock,
                 start_button,
                 finish_button,
                 delete_button,
@@ -1552,6 +1603,7 @@ class Client(BaseHTTPClient):
                 authenticity_token,
                 assignment_token,
                 needs_unlock,
+                email_unlock,
                 start_button,
                 finish_button,
                 delete_button,
@@ -1565,6 +1617,7 @@ class Client(BaseHTTPClient):
                     authenticity_token,
                     assignment_token,
                     needs_unlock,
+                    email_unlock,
                     start_button,
                     finish_button,
                     delete_button,
@@ -1710,16 +1763,21 @@ class Client(BaseHTTPClient):
         return await self._complete_subtask(flow_token, inputs, auth=False)
 
     async def _login_email_auth_challenge(self, flow_token):
-        if self.account.email is None:
+        if self.account.email is None or self.account.email.status == EmailAccountStatus.BANNED:
             raise TwitterException("Нет email для авторизации или он забанен")
 
-        await sleep(10)
-        code = await self.email_client.search_match(
-            regex_pattern=r"following single-use code\.\s+(\b[a-z\d]{8}\b)"
-        )
+        await sleep(20)
+        try:
+            code = await self.email_client.search_match(
+                from_email='verify@x.com',
+                regex_pattern=r"\b\d{6}\b"
+            )
+        except EmailLoginError:
+            self.account.status = TwitterAccountStatus.EMAIL_LOGIN_ERROR
+            raise TwitterAccountBanned("Почта отлетела при авторизации")
 
         if code is None:
-            raise TwitterException('Cant find email code')
+            raise TwitterException('Не пришел код подтверждения')
 
         inputs = [
             {
