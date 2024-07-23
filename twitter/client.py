@@ -102,7 +102,7 @@ class Client(BaseHTTPClient):
         self.max_unlock_attempts = max_unlock_attempts
         self.auto_relogin = auto_relogin
         self._update_account_info_on_startup = update_account_info_on_startup
-        self.email_client = EmailController(account.email)
+        self.email_client = EmailController(account.email) if account.email else None
 
         self.gql = GQLClient(self)
 
@@ -1710,6 +1710,9 @@ class Client(BaseHTTPClient):
         return await self._complete_subtask(flow_token, inputs, auth=False)
 
     async def _login_email_auth_challenge(self, flow_token):
+        if self.account.email is None:
+            raise TwitterException("Нет email для авторизации или он забанен")
+
         await sleep(10)
         code = await self.email_client.search_match(
             regex_pattern=r"following single-use code\.\s+(\b[a-z\d]{8}\b)"
