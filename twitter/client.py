@@ -1922,9 +1922,8 @@ class Client(BaseHTTPClient):
 
         if "LoginTwoFactorAuthChallenge" in subtask_ids:
             if not self.account.mfa_secret:
-                raise TwitterException(
-                    f"Failed to login. Task id: LoginTwoFactorAuthChallenge. No totp_secret!"
-                )
+                self.account.status = AccountStatus.SUSPENDED
+                raise TwitterAccountBanned(f"Failed to login. Task id: LoginTwoFactorAuthChallenge. No totp_secret!")
 
             try:
                 # fmt: off
