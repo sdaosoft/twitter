@@ -24,10 +24,10 @@ def parse_oauth_html(html: str) -> tuple[str | None, str | None, str | None]:
 
 
 def parse_unlock_html(
-        html: str,
-) -> tuple[str | None, str | None, bool, bool, bool, bool, bool]:
+    html: str,
+) -> tuple[str | None, str | None, bool, bool, bool, bool, bool, bool]:
     """
-    :return: authenticity_token, assignment_token, needs_unlock, start_button, finish_button, delete_button
+    :return: authenticity_token, assignment_token, needs_unlock, start_button, finish_button, delete_button, java_script_not_available
     """
     soup = BeautifulSoup(html, "lxml")
     authenticity_token_element = soup.find("input", {"name": "authenticity_token"})
@@ -43,7 +43,12 @@ def parse_unlock_html(
     start_button = bool(soup.find("input", value="Start"))
     finish_button = bool(soup.find("input", value="Continue to X"))
     delete_button = bool(soup.find("input", value="Delete"))
-    email_unlock = bool(soup.find("input", value="Send email"))
+    email_unlock = bool(soup.find("input", value="Send email")) or bool(
+        soup.find("title", string="Verify email")
+    )
+    java_script_not_available = bool(
+        soup.find("h1", string="JavaScript is not available.")
+    )
     return (
         authenticity_token,
         assignment_token,
@@ -52,4 +57,5 @@ def parse_unlock_html(
         start_button,
         finish_button,
         delete_button,
+        java_script_not_available,
     )

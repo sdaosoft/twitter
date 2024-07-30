@@ -87,15 +87,15 @@ class Client(BaseHTTPClient):
         return url, query_id
 
     def __init__(
-            self,
-            account: Account,
-            *,
-            wait_on_rate_limit: bool = True,
-            capsolver_api_key: str = None,
-            max_unlock_attempts: int = 5,
-            auto_relogin: bool = True,
-            update_account_info_on_startup: bool = True,
-            **session_kwargs,
+        self,
+        account: Account,
+        *,
+        wait_on_rate_limit: bool = True,
+        capsolver_api_key: str = None,
+        max_unlock_attempts: int = 5,
+        auto_relogin: bool = True,
+        update_account_info_on_startup: bool = True,
+        **session_kwargs,
     ):
         super().__init__(**session_kwargs)
         self.account = account
@@ -113,14 +113,14 @@ class Client(BaseHTTPClient):
         return await super().__aenter__()
 
     async def _request(
-            self,
-            method,
-            url,
-            *,
-            auth: bool = True,
-            bearer: bool = True,
-            wait_on_rate_limit: bool = None,
-            **kwargs,
+        self,
+        method,
+        url,
+        *,
+        auth: bool = True,
+        bearer: bool = True,
+        wait_on_rate_limit: bool = None,
+        **kwargs,
     ) -> tuple[requests.Response, Any]:
         cookies = kwargs["cookies"] = kwargs.get("cookies", {})
         headers = kwargs["headers"] = kwargs.get("headers", {})
@@ -156,8 +156,8 @@ class Client(BaseHTTPClient):
         except requests.errors.RequestsError as exc:
             if exc.code == 35:
                 msg = (
-                        "The IP address may have been blocked by Twitter. Blocked countries: Russia. "
-                        + str(exc)
+                    "The IP address may have been blocked by Twitter. Blocked countries: Russia. "
+                    + str(exc)
                 )
                 raise requests.errors.RequestsError(msg, 35, exc.response)
             raise
@@ -198,9 +198,9 @@ class Client(BaseHTTPClient):
                 if 326 in exc.api_codes:
                     for error_data in exc.api_errors:
                         if (
-                                error_data.get("code") == 326
-                                and error_data.get("bounce_location")
-                                == "/i/flow/consent_flow"
+                            error_data.get("code") == 326
+                            and error_data.get("bounce_location")
+                            == "/i/flow/consent_flow"
                         ):
                             self.account.status = AccountStatus.CONSENT_LOCKED
                             raise AccountConsentLocked(exc, self.account)
@@ -239,8 +239,8 @@ class Client(BaseHTTPClient):
             if 326 in exc.api_codes:
                 for error_data in exc.api_errors:
                     if (
-                            error_data.get("code") == 326
-                            and error_data.get("bounce_location") == "/i/flow/consent_flow"
+                        error_data.get("code") == 326
+                        and error_data.get("bounce_location") == "/i/flow/consent_flow"
                     ):
                         self.account.status = AccountStatus.CONSENT_LOCKED
                         raise AccountConsentLocked(exc, self.account)
@@ -280,14 +280,14 @@ class Client(BaseHTTPClient):
             raise ServerError(response, data)
 
     async def request_(
-            self,
-            method,
-            url,
-            *,
-            auto_unlock: bool = True,
-            auto_relogin: bool = None,
-            rerequest_on_bad_ct0: bool = True,
-            **kwargs,
+        self,
+        method,
+        url,
+        *,
+        auto_unlock: bool = True,
+        auto_relogin: bool = None,
+        rerequest_on_bad_ct0: bool = True,
+        **kwargs,
     ) -> tuple[requests.Response, Any]:
         try:
             res = await self._request(method, url, **kwargs)
@@ -304,9 +304,9 @@ class Client(BaseHTTPClient):
             if auto_relogin is None:
                 auto_relogin = self.auto_relogin
             if (
-                    not auto_relogin
-                    or not self.account.password
-                    or not (self.account.email or self.account.username)
+                not auto_relogin
+                or not self.account.password
+                or not (self.account.email or self.account.username)
             ):
                 raise
 
@@ -315,9 +315,9 @@ class Client(BaseHTTPClient):
 
         except Forbidden as exc:
             if (
-                    rerequest_on_bad_ct0
-                    and 353 in exc.api_codes
-                    and "ct0" in exc.response.cookies
+                rerequest_on_bad_ct0
+                and 353 in exc.api_codes
+                and "ct0" in exc.response.cookies
             ):
                 return await self.request_(
                     method, url, rerequest_on_bad_ct0=False, **kwargs
@@ -331,14 +331,14 @@ class Client(BaseHTTPClient):
             await self.establish_status()
 
     async def _request_oauth2_auth_code(
-            self,
-            client_id: str,
-            code_challenge: str,
-            state: str,
-            redirect_uri: str,
-            code_challenge_method: str,
-            scope: str,
-            response_type: str,
+        self,
+        client_id: str,
+        code_challenge: str,
+        state: str,
+        redirect_uri: str,
+        code_challenge_method: str,
+        scope: str,
+        response_type: str,
     ) -> str:
         url = "https://x.com/i/api/2/oauth2/authorize"
         querystring = {
@@ -368,14 +368,14 @@ class Client(BaseHTTPClient):
         )
 
     async def oauth2(
-            self,
-            client_id: str,
-            code_challenge: str,
-            state: str,
-            redirect_uri: str,
-            code_challenge_method: str,
-            scope: str,
-            response_type: str,
+        self,
+        client_id: str,
+        code_challenge: str,
+        state: str,
+        redirect_uri: str,
+        code_challenge_method: str,
+        scope: str,
+        response_type: str,
     ):
         """
         Запрашивает код авторизации для OAuth 2.0 авторизации.
@@ -419,10 +419,10 @@ class Client(BaseHTTPClient):
         return response
 
     async def _confirm_oauth(
-            self,
-            oauth_token: str,
-            authenticity_token: str,
-            redirect_after_login_url: str,
+        self,
+        oauth_token: str,
+        authenticity_token: str,
+        redirect_after_login_url: str,
     ) -> requests.Response:
         url = "https://api.x.com/oauth/authorize"
         params = {
@@ -506,8 +506,8 @@ class Client(BaseHTTPClient):
         return user
 
     async def _request_users_by_ids(
-            self, user_ids: Iterable[str | int]
-    ) -> dict[int: User | Account]:
+        self, user_ids: Iterable[str | int]
+    ) -> dict[int : User | Account]:
         url, query_id = self._action_to_url("UsersByRestIds")
         variables = {"userIds": list({str(user_id) for user_id in user_ids})}
         features = {
@@ -541,8 +541,8 @@ class Client(BaseHTTPClient):
         return user
 
     async def request_users_by_ids(
-            self, user_ids: Iterable[str | int]
-    ) -> dict[int: User | Account]:
+        self, user_ids: Iterable[str | int]
+    ) -> dict[int : User | Account]:
         """
         :param user_ids: ID пользователей
         :return: Пользователи, если существует, иначе None. Или собственный аккаунт, если совпадает ID.
@@ -556,10 +556,10 @@ class Client(BaseHTTPClient):
         await self.request_user_by_username(self.account.username)
 
     async def upload_image(
-            self,
-            image: bytes,
-            attempts: int = 3,
-            timeout: float | tuple[float, float] = 10,
+        self,
+        image: bytes,
+        attempts: int = 3,
+        timeout: float | tuple[float, float] = 10,
     ) -> Media:
         """
         Upload image as bytes.
@@ -579,15 +579,15 @@ class Client(BaseHTTPClient):
                 return Media(**data)
             except (HTTPException, requests.errors.RequestsError) as exc:
                 if (
-                        attempt < attempts - 1
-                        and (
+                    attempt < attempts - 1
+                    and (
                         isinstance(exc, requests.errors.RequestsError)
                         and exc.code == 28
-                )
-                        or (
+                    )
+                    or (
                         isinstance(exc, HTTPException)
                         and exc.response.status_code == 408
-                )
+                    )
                 ):
                     continue
                 else:
@@ -691,25 +691,25 @@ class Client(BaseHTTPClient):
         return await self.request_tweet(tweet_id)
 
     async def _repost_or_search_duplicate(
-            self,
-            tweet_id: int,
-            *,
-            search_duplicate: bool = True,
+        self,
+        tweet_id: int,
+        *,
+        search_duplicate: bool = True,
     ) -> Tweet:
         try:
             tweet = await self._repost(tweet_id)
         except HTTPException as exc:
             if (
-                    search_duplicate
-                    and 327
-                    in exc.api_codes  # duplicate retweet (You have already retweeted this Tweet)
+                search_duplicate
+                and 327
+                in exc.api_codes  # duplicate retweet (You have already retweeted this Tweet)
             ):
                 tweets = await self.request_tweets(self.account.twitter_id)
                 duplicate_tweet = None
                 for tweet_ in tweets:  # type: Tweet
                     if (
-                            tweet_.retweeted_tweet
-                            and tweet_.retweeted_tweet.twitter_id == tweet_id
+                        tweet_.retweeted_tweet
+                        and tweet_.retweeted_tweet.twitter_id == tweet_id
                     ):
                         duplicate_tweet = tweet_
 
@@ -726,10 +726,10 @@ class Client(BaseHTTPClient):
         return tweet
 
     async def repost(
-            self,
-            tweet_id: int,
-            *,
-            search_duplicate: bool = True,
+        self,
+        tweet_id: int,
+        *,
+        search_duplicate: bool = True,
     ) -> Tweet:
         """
         Repost (retweet)
@@ -759,8 +759,8 @@ class Client(BaseHTTPClient):
     async def unlike(self, tweet_id: int) -> dict:
         response_json = await self._interact_with_tweet("UnfavoriteTweet", tweet_id)
         is_unliked = (
-                "data" in response_json
-                and response_json["data"]["unfavorite_tweet"] == "Done"
+            "data" in response_json
+            and response_json["data"]["unfavorite_tweet"] == "Done"
         )
         return is_unliked
 
@@ -844,12 +844,12 @@ class Client(BaseHTTPClient):
         return is_pinned
 
     async def _tweet(
-            self,
-            text: str = None,
-            *,
-            media_id: int | str = None,
-            tweet_id_to_reply: str | int = None,
-            attachment_url: str = None,
+        self,
+        text: str = None,
+        *,
+        media_id: int | str = None,
+        tweet_id_to_reply: str | int = None,
+        attachment_url: str = None,
     ) -> Tweet:
         url, query_id = self._action_to_url("CreateTweet")
         variables = {
@@ -906,13 +906,13 @@ class Client(BaseHTTPClient):
         return tweet
 
     async def _tweet_or_search_duplicate(
-            self,
-            text: str = None,
-            *,
-            media_id: int | str = None,
-            tweet_id_to_reply: str | int = None,
-            attachment_url: str = None,
-            search_duplicate: bool = True,
+        self,
+        text: str = None,
+        *,
+        media_id: int | str = None,
+        tweet_id_to_reply: str | int = None,
+        attachment_url: str = None,
+        search_duplicate: bool = True,
     ) -> Tweet:
         try:
             tweet = await self._tweet(
@@ -923,8 +923,8 @@ class Client(BaseHTTPClient):
             )
         except HTTPException as exc:
             if (
-                    search_duplicate
-                    and 187 in exc.api_codes  # duplicate tweet (Status is a duplicate)
+                search_duplicate
+                and 187 in exc.api_codes  # duplicate tweet (Status is a duplicate)
             ):
                 tweets = await self.request_tweets()
                 duplicate_tweet = None
@@ -944,11 +944,11 @@ class Client(BaseHTTPClient):
         return tweet
 
     async def tweet(
-            self,
-            text: str,
-            *,
-            media_id: int | str = None,
-            search_duplicate: bool = True,
+        self,
+        text: str,
+        *,
+        media_id: int | str = None,
+        search_duplicate: bool = True,
     ) -> Tweet:
         """
         Иногда может вернуть ошибку 404 (Not Found), если плохой прокси или по другим неизвестным причинам
@@ -962,12 +962,12 @@ class Client(BaseHTTPClient):
         )
 
     async def reply(
-            self,
-            tweet_id: str | int,
-            text: str,
-            *,
-            media_id: int | str = None,
-            search_duplicate: bool = True,
+        self,
+        tweet_id: str | int,
+        text: str,
+        *,
+        media_id: int | str = None,
+        search_duplicate: bool = True,
     ) -> Tweet:
         """
         Иногда может вернуть ошибку 404 (Not Found), если плохой прокси или по другим неизвестным причинам
@@ -982,12 +982,12 @@ class Client(BaseHTTPClient):
         )
 
     async def quote(
-            self,
-            tweet_url: str,
-            text: str,
-            *,
-            media_id: int | str = None,
-            search_duplicate: bool = True,
+        self,
+        tweet_url: str,
+        text: str,
+        *,
+        media_id: int | str = None,
+        search_duplicate: bool = True,
     ) -> Tweet:
         """
         Иногда может вернуть ошибку 404 (Not Found), если плохой прокси или по другим неизвестным причинам
@@ -1002,7 +1002,7 @@ class Client(BaseHTTPClient):
         )
 
     async def vote(
-            self, tweet_id: int | str, card_id: int | str, choice_number: int
+        self, tweet_id: int | str, card_id: int | str, choice_number: int
     ) -> dict:
         """
         :return: Raw vote information
@@ -1019,11 +1019,11 @@ class Client(BaseHTTPClient):
         return response_json
 
     async def _request_users_by_action(
-            self,
-            action: str,
-            user_id: int | str,
-            count: int,
-            cursor: str = None,
+        self,
+        action: str,
+        user_id: int | str,
+        count: int,
+        cursor: str = None,
     ) -> list[User]:
         url, query_id = self._action_to_url(action)
         variables = {
@@ -1075,10 +1075,10 @@ class Client(BaseHTTPClient):
         return users
 
     async def request_followers(
-            self,
-            user_id: int | str = None,
-            count: int = 20,
-            cursor: str = None,
+        self,
+        user_id: int | str = None,
+        count: int = 20,
+        cursor: str = None,
     ) -> list[User]:
         """
         :param user_id: Текущий пользователь, если не передан ID иного пользователя.
@@ -1096,10 +1096,10 @@ class Client(BaseHTTPClient):
             )
 
     async def request_followings(
-            self,
-            user_id: int | str = None,
-            count: int = 20,
-            cursor: str = None,
+        self,
+        user_id: int | str = None,
+        count: int = 20,
+        cursor: str = None,
     ) -> list[User]:
         """
         :param user_id: Текущий пользователь, если не передан ID иного пользователя.
@@ -1170,7 +1170,7 @@ class Client(BaseHTTPClient):
         return Tweet.from_raw_data(tweet_data)
 
     async def _request_tweets(
-            self, user_id: int | str, count: int = 20, cursor: str = None
+        self, user_id: int | str, count: int = 20, cursor: str = None
     ) -> list[Tweet]:
         url, query_id = self._action_to_url("UserTweets")
         variables = {
@@ -1219,7 +1219,7 @@ class Client(BaseHTTPClient):
         return await self._request_tweet(tweet_id)
 
     async def request_tweets(
-            self, user_id: int | str = None, count: int = 20, cursor: str = None
+        self, user_id: int | str = None, count: int = 20, cursor: str = None
     ) -> list[Tweet]:
         if not user_id:
             if not self.account.twitter_id:
@@ -1229,7 +1229,7 @@ class Client(BaseHTTPClient):
         return await self._request_tweets(user_id, count, cursor)
 
     async def _update_profile_image(
-            self, type: Literal["banner", "image"], media_id: str | int
+        self, type: Literal["banner", "image"], media_id: str | int
     ) -> str:
         """
         :return: Image URL
@@ -1296,11 +1296,11 @@ class Client(BaseHTTPClient):
         return changed
 
     async def update_profile(
-            self,
-            name: str = None,
-            description: str = None,
-            location: str = None,
-            website: str = None,
+        self,
+        name: str = None,
+        description: str = None,
+        location: str = None,
+        website: str = None,
     ) -> bool:
         """
         Locks an account!
@@ -1341,12 +1341,12 @@ class Client(BaseHTTPClient):
             pass
 
     async def update_birthdate(
-            self,
-            day: int,
-            month: int,
-            year: int,
-            visibility: Literal["self", "mutualfollow"] = "self",
-            year_visibility: Literal["self"] = "self",
+        self,
+        day: int,
+        month: int,
+        year: int,
+        visibility: Literal["self", "mutualfollow"] = "self",
+        year_visibility: Literal["self"] = "self",
     ) -> bool:
         url = "https://x.com/i/api/1.1/account/update_profile.json"
         payload = {
@@ -1388,7 +1388,7 @@ class Client(BaseHTTPClient):
         return event_data  # TODO Возвращать модель, а не словарь
 
     async def send_message_to_conversation(
-            self, conversation_id: int | str, text: str
+        self, conversation_id: int | str, text: str
     ) -> dict:
         """
         requires OAuth1 or OAuth2
@@ -1451,11 +1451,11 @@ class Client(BaseHTTPClient):
         return messages  # TODO Возвращать модели, а не словари
 
     async def _confirm_unlock(
-            self,
-            authenticity_token: str,
-            assignment_token: str,
-            verification_string: str = None,
-            token: str = None,
+        self,
+        authenticity_token: str,
+        assignment_token: str,
+        verification_string: str = None,
+        token: str = None,
     ) -> tuple[requests.Response, str]:
         payload = {
             "authenticity_token": authenticity_token,
@@ -1465,7 +1465,7 @@ class Client(BaseHTTPClient):
         }
 
         if token:
-            payload['token'] = token
+            payload["token"] = token
 
         if verification_string:
             payload["verification_string"] = verification_string
@@ -1473,7 +1473,9 @@ class Client(BaseHTTPClient):
 
         # TODO ui_metrics
 
-        return await self.request_("POST", self._CAPTCHA_URL, data=payload, bearer=False)
+        return await self.request_(
+            "POST", self._CAPTCHA_URL, data=payload, bearer=False
+        )
 
     async def unlock(self):
         if self.account.status != AccountStatus.LOCKED:
@@ -1488,8 +1490,13 @@ class Client(BaseHTTPClient):
             start_button,
             finish_button,
             delete_button,
+            java_script_not_available,
         ) = parse_unlock_html(html)
         attempt = 1
+
+        if java_script_not_available:
+            await self.establish_status()
+            return
 
         if delete_button:
             response, html = await self._confirm_unlock(
@@ -1503,6 +1510,7 @@ class Client(BaseHTTPClient):
                 start_button,
                 finish_button,
                 delete_button,
+                java_script_not_available,
             ) = parse_unlock_html(html)
 
         if start_button or finish_button:
@@ -1517,12 +1525,16 @@ class Client(BaseHTTPClient):
                 start_button,
                 finish_button,
                 delete_button,
+                java_script_not_available,
             ) = parse_unlock_html(html)
 
         if email_unlock:
-            if self.account.email is None or self.account.email.status == EmailAccountStatus.BANNED:
+            if (
+                self.account.email is None
+                or self.account.email.status == EmailAccountStatus.BANNED
+            ):
                 self.account.status = TwitterAccountStatus.EMAIL_LOGIN_ERROR
-                raise TwitterAccountBanned('Для разлока требуется почта, а она в бане')
+                raise TwitterAccountBanned("Для разлока требуется почта, а она в бане")
 
             response, html = await self._confirm_unlock(
                 authenticity_token, assignment_token
@@ -1535,20 +1547,21 @@ class Client(BaseHTTPClient):
                 start_button,
                 finish_button,
                 delete_button,
+                java_script_not_available,
             ) = parse_unlock_html(html)
 
             await sleep(40)
             try:
                 code = await self.email_client.search_match(
-                    from_email='verify@x.com',
-                    regex_pattern=r"\b\d{6}\b"
+                    from_email="verify@x.com", regex_pattern=r"\b\d{6}\b"
                 )
             except EmailLoginError:
                 self.account.status = TwitterAccountStatus.EMAIL_LOGIN_ERROR
-                raise TwitterAccountBanned('Почта не доступна для разлока')
+                raise TwitterAccountBanned("Почта не доступна для разлока")
 
             response, html = await self._confirm_unlock(
-                authenticity_token, assignment_token, token=code)
+                authenticity_token, assignment_token, token=code
+            )
 
             (
                 authenticity_token,
@@ -1558,6 +1571,7 @@ class Client(BaseHTTPClient):
                 start_button,
                 finish_button,
                 delete_button,
+                java_script_not_available,
             ) = parse_unlock_html(html)
 
         funcaptcha = {
@@ -1607,6 +1621,7 @@ class Client(BaseHTTPClient):
                 start_button,
                 finish_button,
                 delete_button,
+                java_script_not_available,
             ) = parse_unlock_html(html)
 
             if finish_button:
@@ -1621,6 +1636,7 @@ class Client(BaseHTTPClient):
                     start_button,
                     finish_button,
                     delete_button,
+                    java_script_not_available,
                 ) = parse_unlock_html(html)
 
             attempt += 1
@@ -1657,10 +1673,10 @@ class Client(BaseHTTPClient):
         return data["flow_token"], subtasks
 
     async def _complete_subtask(
-            self,
-            flow_token: str,
-            inputs: list[dict],
-            **request_kwargs,
+        self,
+        flow_token: str,
+        inputs: list[dict],
+        **request_kwargs,
     ) -> tuple[str, list[Subtask]]:
         payload = request_kwargs["json"] = request_kwargs.get("json") or {}
         payload.update(
@@ -1740,7 +1756,7 @@ class Client(BaseHTTPClient):
                             "response_data": {
                                 "text_data": {
                                     "result": self.account.username
-                                              or self.account.email.mail
+                                    or self.account.email.mail
                                 }
                             },
                         }
@@ -1763,21 +1779,23 @@ class Client(BaseHTTPClient):
         return await self._complete_subtask(flow_token, inputs, auth=False)
 
     async def _login_email_auth_challenge(self, flow_token):
-        if self.account.email is None or self.account.email.status == EmailAccountStatus.BANNED:
+        if (
+            self.account.email is None
+            or self.account.email.status == EmailAccountStatus.BANNED
+        ):
             raise TwitterException("Нет email для авторизации или он забанен")
 
         await sleep(20)
         try:
             code = await self.email_client.search_match(
-                from_email='verify@x.com',
-                regex_pattern=r"\b\d{6}\b"
+                from_email="verify@x.com", regex_pattern=r"\b\d{6}\b"
             )
         except EmailLoginError:
             self.account.status = TwitterAccountStatus.EMAIL_LOGIN_ERROR
             raise TwitterAccountBanned("Почта отлетела при авторизации")
 
         if code is None:
-            raise TwitterException('Не пришел код подтверждения')
+            raise TwitterException("Не пришел код подтверждения")
 
         inputs = [
             {
@@ -1810,7 +1828,7 @@ class Client(BaseHTTPClient):
         return await self._complete_subtask(flow_token, inputs, auth=False)
 
     async def _login_two_factor_auth_choose_method(
-            self, flow_token: str, choices: Iterable[int] = (0,)
+        self, flow_token: str, choices: Iterable[int] = (0,)
     ):
         inputs = [
             {
@@ -1824,9 +1842,9 @@ class Client(BaseHTTPClient):
         return await self._complete_subtask(flow_token, inputs, auth=False)
 
     async def _login_acid(
-            self,
-            flow_token: str,
-            value: str,
+        self,
+        flow_token: str,
+        value: str,
     ):
         inputs = [
             {
@@ -1923,7 +1941,9 @@ class Client(BaseHTTPClient):
         if "LoginTwoFactorAuthChallenge" in subtask_ids:
             if not self.account.mfa_secret:
                 self.account.status = AccountStatus.SUSPENDED
-                raise TwitterAccountBanned(f"Failed to login. Task id: LoginTwoFactorAuthChallenge. No totp_secret!")
+                raise TwitterAccountBanned(
+                    f"Failed to login. Task id: LoginTwoFactorAuthChallenge. No totp_secret!"
+                )
 
             try:
                 # fmt: off
@@ -1997,8 +2017,8 @@ class Client(BaseHTTPClient):
         if self.account.auth_token:
             await self.establish_status()
             if self.account.status not in (
-                    AccountStatus.BAD_TOKEN,
-                    AccountStatus.CONSENT_LOCKED,
+                AccountStatus.BAD_TOKEN,
+                AccountStatus.CONSENT_LOCKED,
             ):
                 return
 
@@ -2075,7 +2095,7 @@ class Client(BaseHTTPClient):
         return await self._send_raw_subtask(params=query, json=payload)
 
     async def _two_factor_enrollment_verify_password_subtask(
-            self, flow_token: str
+        self, flow_token: str
     ) -> tuple[str, list[Subtask]]:
         inputs = [
             {
@@ -2089,7 +2109,7 @@ class Client(BaseHTTPClient):
         return await self._complete_subtask(flow_token, inputs)
 
     async def _two_factor_enrollment_authentication_app_begin_subtask(
-            self, flow_token: str
+        self, flow_token: str
     ) -> tuple[str, list[Subtask]]:
         inputs = [
             {
@@ -2100,8 +2120,8 @@ class Client(BaseHTTPClient):
         return await self._complete_subtask(flow_token, inputs)
 
     async def _two_factor_enrollment_authentication_app_plain_code_subtask(
-            self,
-            flow_token: str,
+        self,
+        flow_token: str,
     ) -> tuple[str, list[Subtask]]:
         subtask_inputs = [
             {
@@ -2259,7 +2279,7 @@ class GQLClient:
         self._client = client
 
     async def gql_request(
-            self, method, operation, **kwargs
+        self, method, operation, **kwargs
     ) -> tuple[requests.Response, dict]:
         url, query_id = self._operation_to_url(operation)
 
@@ -2287,8 +2307,8 @@ class GQLClient:
         return User.from_raw_data(data["user"]["result"]) if data else None
 
     async def users_by_ids(
-            self, user_ids: Iterable[str | int]
-    ) -> dict[int: User | Account]:
+        self, user_ids: Iterable[str | int]
+    ) -> dict[int : User | Account]:
         features = self._DEFAULT_FEATURES
         variables = self._DEFAULT_VARIABLES
         variables["userIds"] = list({str(user_id) for user_id in user_ids})
