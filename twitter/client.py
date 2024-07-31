@@ -15,6 +15,7 @@ from yarl import URL
 
 from cexceptions import TwitterAccountBanned, EmailLoginError
 from ._capsolver.fun_captcha import FunCaptcha, FunCaptchaTypeEnm
+from .base.client import retry
 
 from .errors import (
     TwitterException,
@@ -32,6 +33,7 @@ from .errors import (
     AccountConsentLocked,
     AccountSuspended,
     AccountNotFound,
+    AccountWriteSuspended,
 )
 from .base import BaseHTTPClient
 from .account import AccountStatus
@@ -226,6 +228,10 @@ class Client(BaseHTTPClient):
             if 32 in exc.api_codes:
                 self.account.status = AccountStatus.BAD_TOKEN
                 raise BadAccountToken(exc, self.account)
+
+            if 326 in exc.api_codes:  # TODO: Add text verification
+                self.account.write_suspended = True
+                raise AccountWriteSuspended(exc, self.account)
 
             raise exc
 
@@ -742,10 +748,12 @@ class Client(BaseHTTPClient):
             tweet_id, search_duplicate=search_duplicate
         )
 
-    async def like(self, tweet_id: int) -> bool:
+    async def like(self, tweet_id: int) -> bool | None:
         """
         :return: Liked or not
         """
+        if self.account.write_suspended:
+            return
         try:
             response_json = await self._interact_with_tweet("FavoriteTweet", tweet_id)
         except HTTPException as exc:
@@ -1550,7 +1558,7 @@ class Client(BaseHTTPClient):
                 java_script_not_available,
             ) = parse_unlock_html(html)
 
-            await sleep(40)
+            await sleep(180)
             try:
                 code = await self.email_client.search_match(
                     from_email="verify@x.com", regex_pattern=r"\b\d{6}\b"
@@ -1558,6 +1566,9 @@ class Client(BaseHTTPClient):
             except EmailLoginError:
                 self.account.status = TwitterAccountStatus.EMAIL_LOGIN_ERROR
                 raise TwitterAccountBanned("Почта не доступна для разлока")
+
+            if code is None:
+                raise TwitterException("Не удалось найти код в письме")
 
             response, html = await self._confirm_unlock(
                 authenticity_token, assignment_token, token=code
@@ -1592,14 +1603,6 @@ class Client(BaseHTTPClient):
         while needs_unlock and attempt <= self.max_unlock_attempts:
             solution = await FunCaptcha(**funcaptcha).aio_captcha_handler()
             if solution.errorId:
-                logger.warning(
-                    f"(auth_token={self.account.hidden_auth_token}, id={self.account.id}, username={self.account.username})"
-                    f"Failed to solve funcaptcha:"
-                    f"\n\tUnlock attempt: {attempt}/{self.max_unlock_attempts}"
-                    f"\n\tError ID: {solution.errorId}"
-                    f"\n\tError code: {solution.errorCode}"
-                    f"\n\tError description: {solution.errorDescription}"
-                )
                 attempt += 1
                 continue
 
@@ -1988,6 +1991,7 @@ class Client(BaseHTTPClient):
         await self._complete_subtask(flow_token, [])
         return update_backup_code
 
+    @retry(retry_times=1)
     async def relogin(self):
         """
         Может вызвать следующую ошибку:
@@ -2108,6 +2112,7 @@ class Client(BaseHTTPClient):
         ]
         return await self._complete_subtask(flow_token, inputs)
 
+    @retry()
     async def _two_factor_enrollment_authentication_app_begin_subtask(
         self, flow_token: str
     ) -> tuple[str, list[Subtask]]:
@@ -2147,19 +2152,23 @@ class Client(BaseHTTPClient):
         ]
         await self._complete_subtask(flow_token, subtask_inputs)
 
+    @retry()
     async def _enable_totp(self):
         # fmt: off
         flow_token, subtasks = await self._request_2fa_tasks()
         flow_token, subtasks = await self._two_factor_enrollment_verify_password_subtask(
             flow_token
         )
-        flow_token, subtasks = (await self._two_factor_enrollment_authentication_app_begin_subtask(flow_token))
-
-        for subtask in subtasks:
-            if subtask.id == "TwoFactorEnrollmentAuthenticationAppPlainCodeSubtask":
-                self.account.mfa_secret = subtask.raw_data["show_code"]["code"]
-                break
-
+        already_enabled = any(subtask.id == "TwoFactorEnrollmentAuthenticationAppPlainCodeSubtask" for subtask in subtasks)
+        if not already_enabled:
+            await sleep(2)
+            flow_token, subtasks = (await self._two_factor_enrollment_authentication_app_begin_subtask(flow_token))
+        else:
+            for subtask in subtasks:
+                if subtask.id == "TwoFactorEnrollmentAuthenticationAppPlainCodeSubtask":
+                    self.account.mfa_secret = subtask.raw_data["show_code"]["code"]
+                    break
+        await sleep(1, 2)
         flow_token, subtasks = await self._two_factor_enrollment_authentication_app_plain_code_subtask(flow_token)
 
         for subtask in subtasks:

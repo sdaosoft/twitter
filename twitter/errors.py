@@ -32,10 +32,10 @@ class FailedToFindDuplicatePost(TwitterException):
 
 
 def _http_exception_message(
-        response: requests.Response,
-        api_errors: list[dict],
-        detail: str | None,
-        custom_exception_message: str = None,
+    response: requests.Response,
+    api_errors: list[dict],
+    detail: str | None,
+    custom_exception_message: str = None,
 ):
     exception_message = f"(response status: {response.status_code})"
     if custom_exception_message:
@@ -54,10 +54,10 @@ class HTTPException(TwitterException):
     """Exception raised when an HTTP request fails."""
 
     def __init__(
-            self,
-            response: requests.Response,
-            data: dict | str,
-            custom_exception_message: str = None,
+        self,
+        response: requests.Response,
+        data: dict | str,
+        custom_exception_message: str = None,
     ):
         self.response = response
         self.api_errors: list[dict] = []
@@ -136,10 +136,10 @@ class ServerError(HTTPException):
 
 class BadAccount(TwitterException):
     def __init__(
-            self,
-            http_exception: "HTTPException",
-            account: Account,
-            custom_exception_message: str = None,
+        self,
+        http_exception: "HTTPException",
+        account: Account,
+        custom_exception_message: str = None,
     ):
         self.http_exception = http_exception
         self.account = account
@@ -172,6 +172,12 @@ class AccountLocked(BadAccount):
 class AccountConsentLocked(BadAccount):
     def __init__(self, http_exception: "HTTPException", account: Account):
         exception_message = f"Twitter account is locked."
+        super().__init__(http_exception, account, exception_message)
+
+
+class AccountWriteSuspended(BadAccount):
+    def __init__(self, http_exception: "HTTPException", account: Account):
+        exception_message = f"Twitter account is suspended from writing."
         super().__init__(http_exception, account, exception_message)
 
 

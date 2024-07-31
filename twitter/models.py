@@ -126,6 +126,9 @@ class Tweet(BaseModel):
 
     @classmethod
     def from_raw_data(cls, data: dict):
+        if "legacy" not in data:
+            data = data["tweet"]
+
         legacy_data = data["legacy"]
         views = data["views"]["count"] if "count" in data["views"] else None
 

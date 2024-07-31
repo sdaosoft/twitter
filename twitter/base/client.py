@@ -1,14 +1,14 @@
+from utils import sleep
 from .session import BaseAsyncSession
 
 from typing import Callable, TypeVar, Any
 from functools import wraps
-from curl_cffi.requests.errors import RequestsError
 
 T = TypeVar("T", bound="BaseHTTPClient")
 
 
 def retry(
-        retry_times: int = 1,
+    retry_times: int = 1,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     def decorator(func: Callable[[T, Any], Any]) -> Callable[[T, Any], Any]:
         @wraps(func)
@@ -17,8 +17,9 @@ def retry(
             for attempt in range(retry_times + 1):
                 try:
                     return await func(self, *args, **kwargs)
-                except RequestsError as e:
+                except Exception as e:
                     last_exception = e
+                    await sleep(15, 20)
 
             raise last_exception
 
