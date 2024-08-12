@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, Literal, Iterable
 from time import time
 import asyncio
@@ -10,12 +9,15 @@ import re
 
 from loguru import logger
 from curl_cffi import requests
+import pythonmonkey as pm
 
 from yarl import URL
 
 from cexceptions import TwitterAccountBanned, EmailLoginError
 from ._capsolver.fun_captcha import FunCaptcha, FunCaptchaTypeEnm
 from .base.client import retry
+from datetime import datetime, timedelta
+from curl_cffi.requests import Cookies
 
 from .errors import (
     TwitterException,
@@ -47,6 +49,7 @@ from .utils import (
 )
 from controllers import EmailController
 from utils import sleep
+import dill
 
 
 class Client(BaseHTTPClient):
@@ -57,36 +60,41 @@ class Client(BaseHTTPClient):
         "x-twitter-active-user": "yes",
         "x-twitter-client-language": "en",
     }
-    _GRAPHQL_URL = "https://x.com/i/api/graphql"
-    _ACTION_TO_QUERY_ID = {
-        "CreateRetweet": "ojPdsZsimiJrUGLR1sjUtA",
-        "FavoriteTweet": "lI07N6Otwv1PhnEgXILM7A",
-        "UnfavoriteTweet": "ZYKSe-w7KEslx3JhSIk5LA",
-        "CreateTweet": "oB-5XsHNAbjvARJEc8CZFw",
-        "TweetResultByRestId": "V3vfsYzNEyD9tsf4xoFRgw",
-        "ModerateTweet": "p'jF:GVqCjTcZol0xcBJjw",
-        "DeleteTweet": "VaenaVgh5q5ih7kvyVjgtg",
-        "UserTweets": "V1ze5q3ijDS1VeLwLY0m7g",
-        "TweetDetail": "VwKJcAd7zqlBOitPLUrB8A",
-        "ProfileSpotlightsQuery": "9zwVLJ48lmVUk8u_Gh9DmA",
-        "Following": "t-BPOrMIduGUJWO_LxcvNQ",
-        "Followers": "3yX7xr2hKjcZYnXt6cU6lQ",
-        "UserByScreenName": "G3KGOASz96M-Qu0nwmGXNg",
-        "UsersByRestIds": "itEhGywpgX9b3GJCzOtSrA",
-        "Viewer": "-876iyxD1O_0X0BqeykjZA",
-        # 'TweetDetail': 'VwKJcAd7zqlBOitPLUrB8A',
-    }
+
+    _OPERATION_TO_QUERY_ID = None
+    _OPERATIONS_TO_QUERY_ID_EXPIRATION = None
+
     _CAPTCHA_URL = "https://x.com/account/access"
     _CAPTCHA_SITE_KEY = "0152B4EB-D2DC-460A-89A1-629838B529C9"
+    _CLIENT_DATA_EXPIRATION = None
 
     @classmethod
-    def _action_to_url(cls, action: str) -> tuple[str, str]:
+    def _get_actions_data(cls):
+        if cls._CLIENT_DATA_EXPIRATION and cls._CLIENT_DATA_EXPIRATION > datetime.now():
+            return cls._OPERATION_TO_QUERY_ID
+
+        resp = requests.get(
+            "https://raw.githubusercontent.com/fa0311/TwitterInternalAPIDocument/develop/docs/json/API.json"
+        )
+
+        if resp.status_code != 200:
+            raise Exception("Failed to fetch operation ids from Twitter")
+
+        data = resp.json()
+        cls._OPERATION_TO_QUERY_ID = data["graphql"]
+        cls._DEFAULT_HEADERS["user-agent"] = data["header"]["User-Agent"]
+        cls._BEARER_TOKEN = data["header"]["authorization"].split("Bearer ")[1]
+        cls._CLIENT_DATA_EXPIRATION = datetime.now() + timedelta(hours=12)
+        return cls._OPERATION_TO_QUERY_ID
+
+    @classmethod
+    def _action_to_data(cls, action: str) -> tuple[str, str, dict[str, Any]]:
         """
         :return: URL and Query ID
         """
-        query_id = cls._ACTION_TO_QUERY_ID[action]
-        url = f"{cls._GRAPHQL_URL}/{query_id}/{action}"
-        return url, query_id
+        ACTIONS_DATA = cls._get_actions_data()
+        data = ACTIONS_DATA[action]
+        return data["url"], data["queryId"], data["features"]
 
     def __init__(
         self,
@@ -99,16 +107,23 @@ class Client(BaseHTTPClient):
         update_account_info_on_startup: bool = True,
         **session_kwargs,
     ):
-        super().__init__(**session_kwargs)
+        cookies = Cookies(dill.loads(account.cookies)) if account.cookies else None
+
+        if not cookies and account.auth_token:
+            cookies = Cookies()
+            cookies.set("auth_token", account.auth_token, domain=".x.com")
+            if account.ct0:
+                cookies.set("ct0", account.ct0, domain=".x.com")
+
         self.account = account
+        self._get_actions_data()
+        super().__init__(cookies=cookies, **session_kwargs)
         self.wait_on_rate_limit = wait_on_rate_limit
         self.capsolver_api_key = capsolver_api_key
         self.max_unlock_attempts = max_unlock_attempts
         self.auto_relogin = auto_relogin
         self._update_account_info_on_startup = update_account_info_on_startup
         self.email_client = EmailController(account.email) if account.email else None
-
-        self.gql = GQLClient(self)
 
     async def __aenter__(self):
         await self.on_startup()
@@ -124,37 +139,29 @@ class Client(BaseHTTPClient):
         wait_on_rate_limit: bool = None,
         **kwargs,
     ) -> tuple[requests.Response, Any]:
-        cookies = kwargs["cookies"] = kwargs.get("cookies", {})
+        cookies = self._session.cookies
         headers = kwargs["headers"] = kwargs.get("headers", {})
         if bearer:
             headers["authorization"] = f"Bearer {self._BEARER_TOKEN}"
 
         if auth:
-            if not self.account.auth_token:
-                raise ValueError("No auth_token. Login before")
+            if cookies.get("auth_token") is None:
+                self.account.status = AccountStatus.BAD_TOKEN
+                raise TwitterException("No auth_token. Login before", self.account)
 
-            cookies["auth_token"] = self.account.auth_token
             headers["x-twitter-auth-type"] = "OAuth2Session"
-            if self.account.ct0:
-                cookies["ct0"] = self.account.ct0
-                headers["x-csrf-token"] = self.account.ct0
+            if ct0 := cookies.get("ct0"):
+                headers["x-csrf-token"] = ct0
         else:
             if "auth_token" in cookies:
                 del cookies["auth_token"]
             if "x-twitter-auth-type" in headers:
                 del headers["x-twitter-auth-type"]
 
-        # fmt: off
-        log_message = (
-            f"(auth_token={self.account.hidden_auth_token}, id={self.account.twitter_id}, username={self.account.username})"
-            f" ==> Request {method} {url}")
-        if kwargs.get('data'): log_message += f"\nRequest data: {kwargs.get('data')}"
-        if kwargs.get('json'): log_message += f"\nRequest data: {kwargs.get('json')}"
-        logger.debug(log_message)
-        # fmt: on
-
         try:
-            response = await self.request_session(method, url, **kwargs)
+            response = await self.request_session(
+                method, url, cookies=cookies, **kwargs
+            )
         except requests.errors.RequestsError as exc:
             if exc.code == 35:
                 msg = (
@@ -165,24 +172,12 @@ class Client(BaseHTTPClient):
             raise
 
         data = response.text
-        # fmt: off
-        logger.debug(
-            f"(auth_token={self.account.hidden_auth_token}, id={self.account.twitter_id}, username={self.account.username})"
-            f" <== Response {method} {url}"
-            f"\nStatus code: {response.status_code}"
-            f"\nResponse data: {data}")
-        # fmt: on
+        # if ct0 := self._session.cookies.get("ct0", domain=".x.com"):
+        #     self.account.ct0 = ct0
 
-        if ct0 := self._session.cookies.get("ct0", domain=".x.com"):
-            self.account.ct0 = ct0
-
-        auth_token = self._session.cookies.get("auth_token")
-        if auth_token and auth_token != self.account.auth_token:
-            self.account.auth_token = auth_token
-            logger.warning(
-                f"(auth_token={self.account.hidden_auth_token}, id={self.account.twitter_id}, username={self.account.username})"
-                f" Requested new auth_token!"
-            )
+        # auth_token = self._session.cookies.get("auth_token")
+        # if auth_token and auth_token != self.account.auth_token:
+        #     self.account.auth_token = auth_token
 
         try:
             data = response.json()
@@ -465,31 +460,23 @@ class Client(BaseHTTPClient):
         self.account.username = response_json["screen_name"]
 
     async def _request_user_by_username(self, username: str) -> User | None:
-        url, query_id = self._action_to_url("UserByScreenName")
+        url, _, features = self._action_to_data("UserByScreenName")
+
         variables = {
             "screen_name": username,
             "withSafetyModeUserFields": True,
-        }
-        features = {
-            "hidden_profile_likes_enabled": True,
-            "hidden_profile_subscriptions_enabled": True,
-            "responsive_web_graphql_exclude_directive_enabled": True,
-            "verified_phone_label_enabled": False,
-            "subscriptions_verification_info_is_identity_verified_enabled": True,
-            "subscriptions_verification_info_verified_since_enabled": True,
-            "highlights_tweets_tab_ui_enabled": True,
-            "creator_subscriptions_tweet_preview_api_enabled": True,
-            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-            "responsive_web_graphql_timeline_navigation_enabled": True,
         }
         field_toggles = {
             "withAuxiliaryUserLabels": False,
         }
         params = {
             "variables": variables,
-            "features": features,
             "fieldToggles": field_toggles,
         }
+
+        if features:
+            params["features"] = features
+
         response, data = await self.request_("GET", url, params=params)
         if not data["data"]:
             return None
@@ -514,15 +501,11 @@ class Client(BaseHTTPClient):
     async def _request_users_by_ids(
         self, user_ids: Iterable[str | int]
     ) -> dict[int : User | Account]:
-        url, query_id = self._action_to_url("UsersByRestIds")
+        url, query_id, features = self._action_to_data("UsersByRestIds")
         variables = {"userIds": list({str(user_id) for user_id in user_ids})}
-        features = {
-            "responsive_web_graphql_exclude_directive_enabled": True,
-            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-            "responsive_web_graphql_timeline_navigation_enabled": True,
-            "verified_phone_label_enabled": False,
-        }
-        query = {"variables": variables, "features": features}
+        query = {"variables": variables}
+        if features:
+            query["features"] = features
         response, data = await self.request_("GET", url, params=query)
 
         users = {}
@@ -683,11 +666,14 @@ class Client(BaseHTTPClient):
         return await self._follow_action("destroy", user_id)
 
     async def _interact_with_tweet(self, action: str, tweet_id: int) -> dict:
-        url, query_id = self._action_to_url(action)
+        url, query_id, features = self._action_to_data(action)
         json_payload = {
             "variables": {"tweet_id": tweet_id, "dark_request": False},
             "queryId": query_id,
         }
+        if features:
+            json_payload["features"] = features
+
         response, data = await self.request_("POST", url, json=json_payload)
         return data
 
@@ -824,7 +810,7 @@ class Client(BaseHTTPClient):
     #     print(response, data)
 
     async def delete_tweet(self, tweet_id: int | str) -> bool:
-        url, query_id = self._action_to_url("DeleteTweet")
+        url, query_id, features = self._action_to_data("DeleteTweet")
         json_payload = {
             "variables": {
                 "tweet_id": tweet_id,
@@ -832,6 +818,10 @@ class Client(BaseHTTPClient):
             },
             "queryId": query_id,
         }
+
+        if features:
+            json_payload["features"] = features
+
         response, response_json = await self.request_("POST", url, json=json_payload)
         is_deleted = "data" in response_json and "delete_tweet" in response_json["data"]
         return is_deleted
@@ -859,7 +849,7 @@ class Client(BaseHTTPClient):
         tweet_id_to_reply: str | int = None,
         attachment_url: str = None,
     ) -> Tweet:
-        url, query_id = self._action_to_url("CreateTweet")
+        url, query_id, features = self._action_to_data("CreateTweet")
         variables = {
             "tweet_text": text if text is not None else "",
             "dark_request": False,
@@ -877,36 +867,15 @@ class Client(BaseHTTPClient):
             variables["media"]["media_entities"].append(
                 {"media_id": str(media_id), "tagged_users": []}
             )
-        features = {
-            "communities_web_enable_tweet_community_results_fetch": True,
-            "c9s_tweet_anatomy_moderator_badge_enabled": True,
-            "tweetypie_unmention_optimization_enabled": True,
-            "responsive_web_edit_tweet_api_enabled": True,
-            "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
-            "view_counts_everywhere_api_enabled": True,
-            "longform_notetweets_consumption_enabled": True,
-            "responsive_web_twitter_article_tweet_consumption_enabled": True,
-            "tweet_awards_web_tipping_enabled": False,
-            "creator_subscriptions_quote_tweet_preview_enabled": False,
-            "longform_notetweets_rich_text_read_enabled": True,
-            "longform_notetweets_inline_media_enabled": True,
-            "articles_preview_enabled": True,
-            "rweb_video_timestamps_enabled": True,
-            "rweb_tipjar_consumption_enabled": True,
-            "responsive_web_graphql_exclude_directive_enabled": True,
-            "verified_phone_label_enabled": False,
-            "freedom_of_speech_not_reach_fetch_enabled": True,
-            "standardized_nudges_misinfo": True,
-            "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
-            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-            "responsive_web_graphql_timeline_navigation_enabled": True,
-            "responsive_web_enhance_cards_enabled": False,
-        }
+
         payload = {
             "variables": variables,
-            "features": features,
             "queryId": query_id,
         }
+
+        if features:
+            payload["features"] = features
+
         response, response_json = await self.request_("POST", url, json=payload)
         tweet = Tweet.from_raw_data(
             response_json["data"]["create_tweet"]["tweet_results"]["result"]
@@ -1033,7 +1002,7 @@ class Client(BaseHTTPClient):
         count: int,
         cursor: str = None,
     ) -> list[User]:
-        url, query_id = self._action_to_url(action)
+        url, query_id, features = self._action_to_data(action)
         variables = {
             "userId": str(user_id),
             "count": count,
@@ -1041,32 +1010,14 @@ class Client(BaseHTTPClient):
         }
         if cursor:
             variables["cursor"] = cursor
-        features = {
-            "rweb_lists_timeline_redesign_enabled": True,
-            "responsive_web_graphql_exclude_directive_enabled": True,
-            "verified_phone_label_enabled": False,
-            "creator_subscriptions_tweet_preview_api_enabled": True,
-            "responsive_web_graphql_timeline_navigation_enabled": True,
-            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-            "tweetypie_unmention_optimization_enabled": True,
-            "responsive_web_edit_tweet_api_enabled": True,
-            "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
-            "view_counts_everywhere_api_enabled": True,
-            "longform_notetweets_consumption_enabled": True,
-            "responsive_web_twitter_article_tweet_consumption_enabled": False,
-            "tweet_awards_web_tipping_enabled": False,
-            "freedom_of_speech_not_reach_fetch_enabled": True,
-            "standardized_nudges_misinfo": True,
-            "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
-            "longform_notetweets_rich_text_read_enabled": True,
-            "longform_notetweets_inline_media_enabled": True,
-            "responsive_web_media_download_video_enabled": False,
-            "responsive_web_enhance_cards_enabled": False,
-        }
+
         params = {
             "variables": variables,
-            "features": features,
         }
+
+        if features:
+            params["features"] = features
+
         response, response_json = await self.request_("GET", url, params=params)
 
         users = []
@@ -1125,7 +1076,7 @@ class Client(BaseHTTPClient):
             )
 
     async def _request_tweet(self, tweet_id: int | str) -> Tweet:
-        url, query_id = self._action_to_url("TweetDetail")
+        url, query_id, features = self._action_to_data("TweetDetail")
         variables = {
             "focalTweetId": str(tweet_id),
             "with_rux_injections": False,
@@ -1136,32 +1087,7 @@ class Client(BaseHTTPClient):
             "withVoice": True,
             "withV2Timeline": True,
         }
-        features = {
-            "rweb_tipjar_consumption_enabled": True,
-            "responsive_web_graphql_exclude_directive_enabled": True,
-            "verified_phone_label_enabled": False,
-            "creator_subscriptions_tweet_preview_api_enabled": True,
-            "responsive_web_graphql_timeline_navigation_enabled": True,
-            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-            "communities_web_enable_tweet_community_results_fetch": True,
-            "c9s_tweet_anatomy_moderator_badge_enabled": True,
-            "articles_preview_enabled": True,
-            "tweetypie_unmention_optimization_enabled": True,
-            "responsive_web_edit_tweet_api_enabled": True,
-            "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
-            "view_counts_everywhere_api_enabled": True,
-            "longform_notetweets_consumption_enabled": True,
-            "responsive_web_twitter_article_tweet_consumption_enabled": True,
-            "tweet_awards_web_tipping_enabled": False,
-            "creator_subscriptions_quote_tweet_preview_enabled": False,
-            "freedom_of_speech_not_reach_fetch_enabled": True,
-            "standardized_nudges_misinfo": True,
-            "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
-            "rweb_video_timestamps_enabled": True,
-            "longform_notetweets_rich_text_read_enabled": True,
-            "longform_notetweets_inline_media_enabled": True,
-            "responsive_web_enhance_cards_enabled": False,
-        }
+
         field_toggles = {
             "withArticleRichContentState": True,
             "withArticlePlainText": False,
@@ -1169,9 +1095,12 @@ class Client(BaseHTTPClient):
         }
         query = {
             "variables": variables,
-            "features": features,
             "fieldToggles": field_toggles,
         }
+
+        if features:
+            query["features"] = features
+
         response, data = await self.request_("GET", url, params=query)
         instructions = data["data"]["threaded_conversation_with_injections_v2"]["instructions"]  # type: ignore
         tweet_data = tweets_data_from_instructions(instructions)[0]
@@ -1180,7 +1109,7 @@ class Client(BaseHTTPClient):
     async def _request_tweets(
         self, user_id: int | str, count: int = 20, cursor: str = None
     ) -> list[Tweet]:
-        url, query_id = self._action_to_url("UserTweets")
+        url, query_id, features = self._action_to_data("UserTweets")
         variables = {
             "userId": str(user_id),
             "count": count,
@@ -1191,30 +1120,11 @@ class Client(BaseHTTPClient):
         }
         if cursor:
             variables["cursor"] = cursor
-        features = {
-            "responsive_web_graphql_exclude_directive_enabled": True,
-            "verified_phone_label_enabled": False,
-            "creator_subscriptions_tweet_preview_api_enabled": True,
-            "responsive_web_graphql_timeline_navigation_enabled": True,
-            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-            "c9s_tweet_anatomy_moderator_badge_enabled": True,
-            "tweetypie_unmention_optimization_enabled": True,
-            "responsive_web_edit_tweet_api_enabled": True,
-            "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
-            "view_counts_everywhere_api_enabled": True,
-            "longform_notetweets_consumption_enabled": True,
-            "responsive_web_twitter_article_tweet_consumption_enabled": False,
-            "tweet_awards_web_tipping_enabled": False,
-            "freedom_of_speech_not_reach_fetch_enabled": True,
-            "standardized_nudges_misinfo": True,
-            "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
-            "rweb_video_timestamps_enabled": True,
-            "longform_notetweets_rich_text_read_enabled": True,
-            "longform_notetweets_inline_media_enabled": True,
-            "responsive_web_media_download_video_enabled": False,
-            "responsive_web_enhance_cards_enabled": False,
-        }
-        params = {"variables": variables, "features": features}
+
+        params = {"variables": variables}
+
+        if features:
+            params["features"] = features
         response, data = await self.request_("GET", url, params=params)
 
         instructions = data["data"]["user"]["result"]["timeline_v2"]["timeline"][
@@ -1345,7 +1255,7 @@ class Client(BaseHTTPClient):
         try:
             await self.request_("POST", url, auto_unlock=False, auto_relogin=False)
             self.account.status = AccountStatus.GOOD
-        except BadAccount:
+        except TwitterException:
             pass
 
     async def update_birthdate(
@@ -1747,6 +1657,110 @@ class Client(BaseHTTPClient):
         }
         return await self._send_raw_subtask(params=params, json=payload, auth=False)
 
+    async def _login_ui_metrics(self, flow_token: str):
+        js_inst_response = await self._session.get(
+            "https://x.com/i/js_inst?c_name=ui_metrics"
+        )
+
+        def _get_ui_metrics(js_inst: str):
+            # Extract the function from the obfuscated JavaScript
+            js_inst_function = js_inst.split("\n")[2]
+            js_inst_function_name = (
+                re.search(re.compile(r"function [a-zA-Z]+"), js_inst_function)
+                .group()
+                .replace("function ", "")
+            )
+
+            # Mock DOM in JavaScript using PythonMonkey
+            js_dom_mock = """
+                var _element = {
+                    appendChild: function(x) {
+                        // do nothing
+                    },
+                    removeChild: function(x) {
+                        // do nothing
+                    },
+                    setAttribute: function(x, y) {
+                        // do nothing
+                    },
+                    innerText: '',
+                    innerHTML: '',
+                    outerHTML: '',
+                    tagName: '',
+                    textContent: '',
+                }
+                _element['children'] = [_element];
+                _element['firstElementChild'] = _element;
+                _element['lastElementChild'] = _element;
+                _element['nextSibling'] = _element;
+                _element['nextElementSibling'] = _element;
+                _element['parentNode'] = _element;
+                _element['previousSibling'] = _element;
+                _element['previousElementSibling'] = _element;
+                document = {
+                    createElement: function(x) {
+                        return _element;
+                    },
+                    getElementById: function(x) {
+                        return _element;
+                    },
+                    getElementsByClassName: function(x) {
+                        return [_element];
+                    },
+                    getElementsByName: function(x) {
+                        return [_element];
+                    },
+                    getElementsByTagName: function(x) {
+                        return [_element];
+                    },
+                    getElementsByTagNameNS: function(x, y) {
+                        return [_element];
+                    },
+                    querySelector: function(x) {
+                        return _element;
+                    },
+                    querySelectorAll: function(x) {
+                        return [_element];
+                    },
+                }
+            """
+
+            # Combine the DOM mock and the JavaScript function to execute
+            js_code = f"""
+                {js_dom_mock}
+                {js_inst_function}
+                var ui_metrics = {js_inst_function_name}();
+                ui_metrics;
+            """
+
+            # Execute the JavaScript code using pythonmonkey
+            result = pm.eval(js_code)
+
+            def to_plain_dict(input_dict):
+                if isinstance(input_dict, dict):
+                    return {str(k): to_plain_dict(v) for k, v in input_dict.items()}
+                elif isinstance(input_dict, list):
+                    return [to_plain_dict(i) for i in input_dict]
+                else:
+                    return input_dict
+
+            return to_plain_dict(result)
+
+        ui_metrics = _get_ui_metrics(js_inst_response.text)
+
+        ui_metrics_str = json.dumps(ui_metrics).replace('"', '\\"')
+        inputs = [
+            {
+                "subtask_id": "LoginJsInstrumentationSubtask",
+                "js_instrumentation": {
+                    "response": ui_metrics_str,
+                    "link": "next_link",
+                },
+            },
+        ]
+
+        return await self._complete_subtask(flow_token, inputs, auth=False)
+
     async def _login_enter_user_identifier(self, flow_token: str):
         inputs = [
             {
@@ -1788,7 +1802,7 @@ class Client(BaseHTTPClient):
         ):
             raise TwitterException("Нет email для авторизации или он забанен")
 
-        await sleep(20)
+        await sleep(60)
         try:
             code = await self.email_client.search_match(
                 from_email="verify@x.com", regex_pattern=r"\b\d{6}\b"
@@ -1858,25 +1872,20 @@ class Client(BaseHTTPClient):
         return await self._complete_subtask(flow_token, inputs, auth=False)
 
     async def _viewer(self):
-        url, query_id = self._action_to_url("Viewer")
-        features = {
-            "rweb_tipjar_consumption_enabled": True,
-            "responsive_web_graphql_exclude_directive_enabled": True,
-            "verified_phone_label_enabled": False,
-            "creator_subscriptions_tweet_preview_api_enabled": True,
-            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-            "responsive_web_graphql_timeline_navigation_enabled": True,
-        }
+        url, query_id, features = self._action_to_data("Viewer")
         field_toggles = {
             "isDelegate": False,
             "withAuxiliaryUserLabels": False,
         }
         variables = {"withCommunitiesMemberships": True}
         params = {
-            "features": features,
             "fieldToggles": field_toggles,
             "variables": variables,
         }
+
+        if features:
+            params["features"] = features
+
         res = await self.request_("GET", url, params=params)
         return res
 
@@ -1895,13 +1904,24 @@ class Client(BaseHTTPClient):
 
     async def _login(self) -> bool:
         update_backup_code = False
-
+        self._session.cookies.clear()
+        await self._session.get("https://x.com/i/flow/login")
         guest_token = await self._request_guest_token()
         self._session.headers["X-Guest-Token"] = guest_token
 
+        await self._session.get("https://api.x.com/1.1/hashflags.json")
+
         flow_token, subtasks = await self._request_login_tasks()
-        for _ in range(2):
-            flow_token, subtasks = await self._login_enter_user_identifier(flow_token)
+
+        flow_token, subtasks = await self._login_ui_metrics(flow_token)
+
+        await self._session.post(
+            "https://api.x.com/1.1/onboarding/sso_init.json", json={"provider": "apple"}
+        )
+
+        await sleep(2, 5)
+
+        flow_token, subtasks = await self._login_enter_user_identifier(flow_token)
 
         subtask_ids = {subtask.id for subtask in subtasks}
         if "LoginEnterAlternateIdentifierSubtask" in subtask_ids:
@@ -1909,6 +1929,7 @@ class Client(BaseHTTPClient):
                 self.account.status = AccountStatus.NOT_FOUND
                 raise TwitterException("Failed to login: no username to relogin")
 
+        await sleep(2, 5)
         flow_token, subtasks = await self._login_enter_password(flow_token)
         flow_token, subtasks = await self._account_duplication_check(flow_token)
 
@@ -1925,14 +1946,11 @@ class Client(BaseHTTPClient):
                     )
                 try:
                     # fmt: off
+                    await sleep(4, 6)
                     flow_token, subtasks = await self._login_acid(flow_token, self.account.email.mail)
                     # fmt: on
                 except HTTPException as exc:
                     if 399 in exc.api_codes:
-                        logger.warning(
-                            f"(auth_token={self.account.hidden_auth_token}, id={self.account.twitter_id}, username={self.account.username})"
-                            f" Bad email!"
-                        )
                         raise TwitterException(
                             f"Failed to login. Task id: LoginAcid. Bad email!"
                         )
@@ -1943,22 +1961,19 @@ class Client(BaseHTTPClient):
 
         if "LoginTwoFactorAuthChallenge" in subtask_ids:
             if not self.account.mfa_secret:
-                self.account.status = AccountStatus.SUSPENDED
+                self.account.status = AccountStatus.NOT_FOUND
                 raise TwitterAccountBanned(
                     f"Failed to login. Task id: LoginTwoFactorAuthChallenge. No totp_secret!"
                 )
 
             try:
                 # fmt: off
+                await sleep(2, 5)
                 flow_token, subtasks = await self._login_two_factor_auth_challenge(flow_token,
                                                                                    self.account.get_totp_code())
                 # fmt: on
             except HTTPException as exc:
                 if 399 in exc.api_codes:
-                    logger.warning(
-                        f"(auth_token={self.account.hidden_auth_token}, id={self.account.twitter_id}, username={self.account.username})"
-                        f" Bad TOTP secret!"
-                    )
                     if not self.account.backup_code:
                         raise TwitterException(
                             f"Failed to login. Task id: LoginTwoFactorAuthChallenge. No backup code!"
@@ -1966,8 +1981,10 @@ class Client(BaseHTTPClient):
 
                     # Enter backup code
                     # fmt: off
+                    await sleep(4, 6)
                     flow_token, subtasks = await self._login_two_factor_auth_choose_method(flow_token)
                     try:
+                        await sleep(4, 6)
                         flow_token, subtasks = await self._login_two_factor_auth_challenge(flow_token,
                                                                                            self.account.backup_code)
                     except HTTPException as exc:
@@ -1986,7 +2003,6 @@ class Client(BaseHTTPClient):
                     # fmt: on
                 else:
                     raise
-
         await self._viewer()
         await self._complete_subtask(flow_token, [])
         return update_backup_code
@@ -2018,7 +2034,7 @@ class Client(BaseHTTPClient):
         await self.establish_status()
 
     async def login(self):
-        if self.account.auth_token:
+        if self._session.cookies.get("auth_token"):
             await self.establish_status()
             if self.account.status not in (
                 AccountStatus.BAD_TOKEN,
@@ -2159,7 +2175,8 @@ class Client(BaseHTTPClient):
         flow_token, subtasks = await self._two_factor_enrollment_verify_password_subtask(
             flow_token
         )
-        already_enabled = any(subtask.id == "TwoFactorEnrollmentAuthenticationAppPlainCodeSubtask" for subtask in subtasks)
+        already_enabled = any(
+            subtask.id == "TwoFactorEnrollmentAuthenticationAppPlainCodeSubtask" for subtask in subtasks)
         if not already_enabled:
             await sleep(2)
             flow_token, subtasks = (await self._two_factor_enrollment_authentication_app_begin_subtask(flow_token))
@@ -2189,148 +2206,3 @@ class Client(BaseHTTPClient):
             raise ValueError("Password required to enable TOTP")
 
         await self._enable_totp()
-
-
-class GQLClient:
-    _GRAPHQL_URL = "https://x.com/i/api/graphql"
-    _OPERATION_TO_QUERY_ID = {
-        "CreateRetweet": "ojPdsZsimiJrUGLR1sjUtA",
-        "FavoriteTweet": "lI07N6Otwv1PhnEgXILM7A",
-        "UnfavoriteTweet": "ZYKSe-w7KEslx3JhSIk5LA",
-        "CreateTweet": "v0en1yVV-Ybeek8ClmXwYw",
-        "TweetResultByRestId": "V3vfsYzNEyD9tsf4xoFRgw",
-        "ModerateTweet": "p'jF:GVqCjTcZol0xcBJjw",
-        "DeleteTweet": "VaenaVgh5q5ih7kvyVjgtg",
-        "UserTweets": "V1ze5q3ijDS1VeLwLY0m7g",
-        "TweetDetail": "VWFGPVAGkZMGRKGe3GFFnA",
-        "ProfileSpotlightsQuery": "9zwVLJ48lmVUk8u_Gh9DmA",
-        "Following": "t-BPOrMIduGUJWO_LxcvNQ",
-        "Followers": "3yX7xr2hKjcZYnXt6cU6lQ",
-        "UserByScreenName": "G3KGOASz96M-Qu0nwmGXNg",
-        "UsersByRestIds": "itEhGywpgX9b3GJCzOtSrA",
-        "Viewer": "-876iyxD1O_0X0BqeykjZA",
-    }
-    _DEFAULT_VARIABLES = {
-        "count": 1000,
-        "withSafetyModeUserFields": True,
-        "includePromotedContent": True,
-        "withQuickPromoteEligibilityTweetFields": True,
-        "withVoice": True,
-        "withV2Timeline": True,
-        "withDownvotePerspective": False,
-        "withBirdwatchNotes": True,
-        "withCommunity": True,
-        "withSuperFollowsUserFields": True,
-        "withReactionsMetadata": False,
-        "withReactionsPerspective": False,
-        "withSuperFollowsTweetFields": True,
-        "isMetatagsQuery": False,
-        "withReplays": True,
-        "withClientEventToken": False,
-        "withAttachments": True,
-        "withConversationQueryHighlights": True,
-        "withMessageQueryHighlights": True,
-        "withMessages": True,
-    }
-    _DEFAULT_FEATURES = {
-        "c9s_tweet_anatomy_moderator_badge_enabled": True,
-        "responsive_web_home_pinned_timelines_enabled": True,
-        "blue_business_profile_image_shape_enabled": True,
-        "creator_subscriptions_tweet_preview_api_enabled": True,
-        "freedom_of_speech_not_reach_fetch_enabled": True,
-        "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
-        "graphql_timeline_v2_bookmark_timeline": True,
-        "hidden_profile_likes_enabled": True,
-        "highlights_tweets_tab_ui_enabled": True,
-        "interactive_text_enabled": True,
-        "longform_notetweets_consumption_enabled": True,
-        "longform_notetweets_inline_media_enabled": True,
-        "longform_notetweets_rich_text_read_enabled": True,
-        "longform_notetweets_richtext_consumption_enabled": True,
-        "profile_foundations_tweet_stats_enabled": True,
-        "profile_foundations_tweet_stats_tweet_frequency": True,
-        "responsive_web_birdwatch_note_limit_enabled": True,
-        "responsive_web_edit_tweet_api_enabled": True,
-        "responsive_web_enhance_cards_enabled": False,
-        "responsive_web_graphql_exclude_directive_enabled": True,
-        "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-        "responsive_web_graphql_timeline_navigation_enabled": True,
-        "responsive_web_media_download_video_enabled": False,
-        "responsive_web_text_conversations_enabled": False,
-        "responsive_web_twitter_article_data_v2_enabled": True,
-        "responsive_web_twitter_article_tweet_consumption_enabled": False,
-        "responsive_web_twitter_blue_verified_badge_is_enabled": True,
-        "rweb_lists_timeline_redesign_enabled": True,
-        "spaces_2022_h2_clipping": True,
-        "spaces_2022_h2_spaces_communities": True,
-        "standardized_nudges_misinfo": True,
-        "subscriptions_verification_info_verified_since_enabled": True,
-        "tweet_awards_web_tipping_enabled": False,
-        "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
-        "tweetypie_unmention_optimization_enabled": True,
-        "verified_phone_label_enabled": False,
-        "vibe_api_enabled": True,
-        "view_counts_everywhere_api_enabled": True,
-        "hidden_profile_subscriptions_enabled": True,
-        "subscriptions_verification_info_is_identity_verified_enabled": True,
-    }
-
-    @classmethod
-    def _operation_to_url(cls, operation: str) -> tuple[str, str]:
-        """
-        :return: URL and Query ID
-        """
-        query_id = cls._OPERATION_TO_QUERY_ID[operation]
-        url = f"{cls._GRAPHQL_URL}/{query_id}/{operation}"
-        return url, query_id
-
-    def __init__(self, client: Client):
-        self._client = client
-
-    async def gql_request(
-        self, method, operation, **kwargs
-    ) -> tuple[requests.Response, dict]:
-        url, query_id = self._operation_to_url(operation)
-
-        if method == "POST":
-            payload = kwargs["json"] = kwargs.get("json") or {}
-            payload["queryId"] = query_id
-        else:
-            params = kwargs["params"] = kwargs.get("params") or {}
-            ...
-
-        response, data = await self._client.request_(method, url, **kwargs)
-        return response, data["data"]
-
-    async def user_by_username(self, username: str) -> User | None:
-        features = self._DEFAULT_FEATURES
-        variables = self._DEFAULT_VARIABLES
-        variables["screen_name"] = username
-        params = {
-            "variables": variables,
-            "features": features,
-        }
-        response, data = await self.gql_request(
-            "GET", "UserByScreenName", params=params
-        )
-        return User.from_raw_data(data["user"]["result"]) if data else None
-
-    async def users_by_ids(
-        self, user_ids: Iterable[str | int]
-    ) -> dict[int : User | Account]:
-        features = self._DEFAULT_FEATURES
-        variables = self._DEFAULT_VARIABLES
-        variables["userIds"] = list({str(user_id) for user_id in user_ids})
-        params = {
-            "variables": variables,
-            "features": features,
-        }
-        response, data = await self.gql_request("GET", "UsersByRestIds", params=params)
-
-        users = {}
-        for user_data in data["users"]:
-            user = User.from_raw_data(user_data["result"])
-            users[user.id] = user
-            if user.id == self._client.account.id:
-                users[self._client.account.id] = self._client.account
-        return users

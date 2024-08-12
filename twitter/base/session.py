@@ -16,28 +16,25 @@ class BaseAsyncSession(requests.AsyncSession):
     DEFAULT_HEADERS = {
         "accept": "*/*",
         "accept-language": "en-US,en",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        'Priority': 'u=1, i',
-        "sec-ch-ua": '"Google Chrome";v="124", "Chromium";v="124", "Not.A/Brand";v="24"',
-        "sec-ch-ua-platform": '"Windows"',
+        "Priority": "u=1, i",
         "sec-ch-ua-mobile": "?0",
         "sec-fetch-dest": "empty",
         "sec-fetch-mode": "cors",
         "sec-fetch-site": "ssame-site",
         "connection": "keep-alive",
     }
-    DEFAULT_IMPERSONATE = requests.BrowserType.chrome120
+    DEFAULT_IMPERSONATE = requests.BrowserType.chrome124
 
     def __init__(
-            self,
-            proxy: str | Proxy = None,
-            **session_kwargs,
+        self,
+        proxy: str | Proxy = None,
+        **session_kwargs,
     ):
         self._proxy = None
         headers = session_kwargs["headers"] = session_kwargs.get("headers") or {}
         headers.update(self.DEFAULT_HEADERS)
         session_kwargs["impersonate"] = (
-                session_kwargs.get("impersonate") or self.DEFAULT_IMPERSONATE
+            session_kwargs.get("impersonate") or self.DEFAULT_IMPERSONATE
         )
         super().__init__(**session_kwargs)
         self.proxy = proxy

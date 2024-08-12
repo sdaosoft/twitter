@@ -19,7 +19,7 @@ def retry(
                     return await func(self, *args, **kwargs)
                 except Exception as e:
                     last_exception = e
-                    await sleep(15, 20)
+                    await sleep(10, 20)
 
             raise last_exception
 
