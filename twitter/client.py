@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal, Iterable
+from typing import Any, Literal, Iterable, cast, Dict
 from time import time
 import asyncio
 import base64
@@ -9,7 +9,8 @@ import re
 
 from loguru import logger
 from curl_cffi import requests
-import pythonmonkey as pm
+from js2py.base import JsObjectWrapper
+import js2py
 
 from yarl import URL
 
@@ -1658,20 +1659,19 @@ class Client(BaseHTTPClient):
         return await self._send_raw_subtask(params=params, json=payload, auth=False)
 
     async def _login_ui_metrics(self, flow_token: str):
-        js_inst_response = await self._session.get(
-            "https://x.com/i/js_inst?c_name=ui_metrics"
+        js_inst_response = await self._request(
+            "https://x.com/i/js_inst?c_name=ui_metrics",
+            auth=False
         )
 
-        def _get_ui_metrics(js_inst: str):
-            # Extract the function from the obfuscated JavaScript
+        def _get_ui_metrics(js_inst: str) -> Dict[str, Any]:
             js_inst_function = js_inst.split("\n")[2]
             js_inst_function_name = (
                 re.search(re.compile(r"function [a-zA-Z]+"), js_inst_function)
                 .group()
                 .replace("function ", "")
-            )
+            )  # type: ignore
 
-            # Mock DOM in JavaScript using PythonMonkey
             js_dom_mock = """
                 var _element = {
                     appendChild: function(x) {
@@ -1723,28 +1723,15 @@ class Client(BaseHTTPClient):
                         return [_element];
                     },
                 }
-            """
+                """
 
-            # Combine the DOM mock and the JavaScript function to execute
-            js_code = f"""
-                {js_dom_mock}
-                {js_inst_function}
-                var ui_metrics = {js_inst_function_name}();
-                ui_metrics;
-            """
+            js_context = js2py.EvalJs()
+            js_context.execute(js_dom_mock)
+            js_context.execute(js_inst_function)
+            js_context.execute(f"var ui_metrics = {js_inst_function_name}()")
 
-            # Execute the JavaScript code using pythonmonkey
-            result = pm.eval(js_code)
-
-            def to_plain_dict(input_dict):
-                if isinstance(input_dict, dict):
-                    return {str(k): to_plain_dict(v) for k, v in input_dict.items()}
-                elif isinstance(input_dict, list):
-                    return [to_plain_dict(i) for i in input_dict]
-                else:
-                    return input_dict
-
-            return to_plain_dict(result)
+            ui_metrics = cast(JsObjectWrapper, js_context.ui_metrics)
+            return cast(Dict[str, Any], ui_metrics.to_dict())
 
         ui_metrics = _get_ui_metrics(js_inst_response.text)
 
@@ -1905,18 +1892,23 @@ class Client(BaseHTTPClient):
     async def _login(self) -> bool:
         update_backup_code = False
         self._session.cookies.clear()
-        await self._session.get("https://x.com/i/flow/login")
+        await self._request(
+            "GET", "https://x.com/i/flow/login", auth=False, bearer=False
+        )
         guest_token = await self._request_guest_token()
         self._session.headers["X-Guest-Token"] = guest_token
 
-        await self._session.get("https://api.x.com/1.1/hashflags.json")
+        await self._request("GET", "https://api.x.com/1.1/hashflags.json", auth=False)
 
         flow_token, subtasks = await self._request_login_tasks()
 
         flow_token, subtasks = await self._login_ui_metrics(flow_token)
 
-        await self._session.post(
-            "https://api.x.com/1.1/onboarding/sso_init.json", json={"provider": "apple"}
+        await self._request(
+            "POST",
+            "https://api.x.com/1.1/onboarding/sso_init.json",
+            json={"provider": "apple"},
+            auth=False,
         )
 
         await sleep(2, 5)
