@@ -1659,8 +1659,8 @@ class Client(BaseHTTPClient):
         return await self._send_raw_subtask(params=params, json=payload, auth=False)
 
     async def _login_ui_metrics(self, flow_token: str):
-        js_inst_response = await self._request(
-            "https://x.com/i/js_inst?c_name=ui_metrics", auth=False
+        js_inst_response = await self._session.get(
+            "https://x.com/i/js_inst?c_name=ui_metrics"
         )
 
         def _get_ui_metrics(js_inst: str) -> Dict[str, Any]:
