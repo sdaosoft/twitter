@@ -19,6 +19,7 @@ from ._capsolver.fun_captcha import FunCaptcha, FunCaptchaTypeEnm
 from .base.client import retry
 from datetime import datetime, timedelta
 from curl_cffi.requests import Cookies
+from random import random
 
 from .errors import (
     TwitterException,
@@ -584,6 +585,7 @@ class Client(BaseHTTPClient):
                     raise
 
     async def view(self, tweet_id: int):
+        tweet = await self.request_tweet(tweet_id)
         event_data = [
             {
                 "_category_": "client_event",
@@ -596,16 +598,20 @@ class Client(BaseHTTPClient):
                         "position": 0,
                         "sort_index": "7443468489436196388",
                         "percent_screen_height_100k": 45154,
-                        "is_viewer_follows_tweet_author": False,
-                        "is_tweet_author_follows_viewer": False,
+                        "is_viewer_follows_tweet_author": (
+                            True if random() < 0.1 else False
+                        ),
+                        "is_tweet_author_follows_viewer": (
+                            True if random() < 0.1 else False
+                        ),
                         "is_viewer_super_following_tweet_author": False,
                         "is_viewer_super_followed_by_tweet_author": False,
                         "is_tweet_author_super_followable": False,
                         "engagement_metrics": {
-                            "reply_count": 0,
-                            "retweet_count": 0,
-                            "favorite_count": 0,
-                            "quote_count": 0,
+                            "reply_count": tweet.reply_count,
+                            "retweet_count": tweet.retweet_count,
+                            "favorite_count": tweet.favorite_count,
+                            "quote_count": tweet.quote_count,
                         },
                     }
                 ],
