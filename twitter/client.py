@@ -460,13 +460,14 @@ class Client(BaseHTTPClient):
         return authenticity_token, redirect_url
 
     async def _update_account_username(self):
-        url = "https://x.com/i/api/1.1/account/settings.json"
+        url = "https://api.x.com/1.1/account/settings.json"
+        headers = {'x-client-transaction-id': base64.b64encode(f"e:{"/1.1/account/settings.json"}".encode()).decode()}
         headers = {
             "x-client-transaction-id": self._encode_x_client_transaction_id(
                 "/1.1/account/settings.json"
             )
         }
-        response, response_json = await self.request_("POST", url, headers=headers)
+        response, response_json = await self.request("POST", url, headers=headers)
         self.account.username = response_json["screen_name"]
 
     async def _request_user_by_username(self, username: str) -> User | None:
