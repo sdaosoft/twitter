@@ -461,7 +461,12 @@ class Client(BaseHTTPClient):
 
     async def _update_account_username(self):
         url = "https://x.com/i/api/1.1/account/settings.json"
-        response, response_json = await self.request_("POST", url)
+        headers = {
+            "x-client-transaction-id": self._encode_x_client_transaction_id(
+                "/1.1/account/settings.json"
+            )
+        }
+        response, response_json = await self.request_("POST", url, headers=headers)
         self.account.username = response_json["screen_name"]
 
     async def _request_user_by_username(self, username: str) -> User | None:
@@ -709,10 +714,7 @@ class Client(BaseHTTPClient):
                 tweets = await self.request_tweets(self.account.twitter_id)
                 duplicate_tweet = None
                 for tweet_ in tweets:  # type: Tweet
-                    if (
-                        tweet_.retweeted_tweet
-                        and tweet_.retweeted_tweet.twitter_id == tweet_id
-                    ):
+                    if tweet_.retweeted_tweet and tweet_.retweeted_tweet.id == tweet_id:
                         duplicate_tweet = tweet_
 
                 if not duplicate_tweet:
@@ -1261,12 +1263,22 @@ class Client(BaseHTTPClient):
         return updated
 
     async def establish_status(self):
-        url = "https://x.com/i/api/1.1/account/update_profile.json"
+        url = "https://api.x.com/1.1/account/personalization/p13n_preferences.json"
+        headers = {
+            "x-client-transaction-id": self._encode_x_client_transaction_id(
+                "/1.1/account/personalization/p13n_preferences.json"
+            )
+        }
         try:
-            await self.request_("POST", url, auto_unlock=False, auto_relogin=False)
+            await self.request_(
+                "GET", url, headers=headers, auto_unlock=False, auto_relogin=False
+            )
             self.account.status = AccountStatus.GOOD
-        except TwitterException:
+        except TwitterException as e:
             pass
+
+    def _encode_x_client_transaction_id(self, url: str) -> str:
+        return base64.b64encode(f"e:{url}".encode()).decode()
 
     async def update_birthdate(
         self,
