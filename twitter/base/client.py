@@ -1,31 +1,10 @@
 from utils import sleep
 from .session import BaseAsyncSession
 
-from typing import Callable, TypeVar, Any
-from functools import wraps
+from typing import TypeVar
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 T = TypeVar("T", bound="BaseHTTPClient")
-
-
-def retry(
-    retry_times: int = 1,
-) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    def decorator(func: Callable[[T, Any], Any]) -> Callable[[T, Any], Any]:
-        @wraps(func)
-        async def wrapper(self: "BaseHTTPClient", *args, **kwargs) -> Any:
-            last_exception = None
-            for attempt in range(retry_times + 1):
-                try:
-                    return await func(self, *args, **kwargs)
-                except Exception as e:
-                    last_exception = e
-                    await sleep(10, 20)
-
-            raise last_exception
-
-        return wrapper
-
-    return decorator
 
 
 class BaseHTTPClient:
@@ -48,6 +27,6 @@ class BaseHTTPClient:
     async def close(self):
         await self._session.close()
 
-    @retry(retry_times=2)
+    @retry(stop=stop_after_attempt(2), wait=wait_fixed(1), reraise=True)
     async def request_session(self, method, url, **kwargs):
         return await self._session.request(method, url, **kwargs)

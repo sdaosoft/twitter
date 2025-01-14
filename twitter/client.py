@@ -447,7 +447,6 @@ class Client(BaseHTTPClient):
         authenticity_token, redirect_url, redirect_after_login_url = parse_oauth_html(
             response.text
         )
-
         # Первая привязка требует подтверждения
         # if redirect_after_login_url:
         response = await self._confirm_oauth(
@@ -459,15 +458,17 @@ class Client(BaseHTTPClient):
 
         return authenticity_token, redirect_url
 
+    def _encode_x_client_transaction_id(self, url: str) -> str:
+        return base64.b64encode(f"e:{url}".encode()).decode()
+
     async def _update_account_username(self):
         url = "https://api.x.com/1.1/account/settings.json"
-        headers = {'x-client-transaction-id': base64.b64encode(f"e:{"/1.1/account/settings.json"}".encode()).decode()}
         headers = {
             "x-client-transaction-id": self._encode_x_client_transaction_id(
                 "/1.1/account/settings.json"
             )
         }
-        response, response_json = await self.request("POST", url, headers=headers)
+        response, response_json = await self.request_("POST", url, headers=headers)
         self.account.username = response_json["screen_name"]
 
     async def _request_user_by_username(self, username: str) -> User | None:
@@ -695,8 +696,8 @@ class Client(BaseHTTPClient):
 
     async def _repost(self, tweet_id: int | str) -> Tweet:
         data = await self._interact_with_tweet("CreateRetweet", tweet_id)
-        tweet_id = data["data"]["create_retweet"]["retweet_results"]["result"]["rest_id"]  # type: ignore
-        return await self.request_tweet(tweet_id)
+        # tweet_id = data["data"]["create_retweet"]["retweet_results"]["result"]["rest_id"]  # type: ignore
+        # return await self.request_tweet(tweet_id)
 
     async def _repost_or_search_duplicate(
         self,
@@ -705,7 +706,8 @@ class Client(BaseHTTPClient):
         search_duplicate: bool = True,
     ) -> Tweet:
         try:
-            tweet = await self._repost(tweet_id)
+            await self._repost(tweet_id)
+            return
         except HTTPException as exc:
             if (
                 search_duplicate
@@ -728,7 +730,7 @@ class Client(BaseHTTPClient):
             else:
                 raise
 
-        return tweet
+        # return tweet
 
     async def repost(
         self,
@@ -1278,9 +1280,6 @@ class Client(BaseHTTPClient):
         except TwitterException as e:
             pass
 
-    def _encode_x_client_transaction_id(self, url: str) -> str:
-        return base64.b64encode(f"e:{url}".encode()).decode()
-
     async def update_birthdate(
         self,
         day: int,
@@ -1621,6 +1620,14 @@ class Client(BaseHTTPClient):
                 "subtask_inputs": inputs,
             }
         )
+        headers = request_kwargs["headers"] = request_kwargs.get("headers") or {}
+        headers.update(
+            {
+                "x-client-transaction-id": self._encode_x_client_transaction_id(
+                    "/1.1/onboarding/task.json"
+                )
+            }
+        )
         return await self._send_raw_subtask(**request_kwargs)
 
     async def _request_login_tasks(self) -> tuple[str, list[Subtask]]:
@@ -1681,8 +1688,8 @@ class Client(BaseHTTPClient):
         return await self._send_raw_subtask(params=params, json=payload, auth=False)
 
     async def _login_ui_metrics(self, flow_token: str):
-        js_inst_response = await self._session.get(
-            "https://x.com/i/js_inst?c_name=ui_metrics"
+        js_inst_response = await self.request_session(
+            "GET", "https://x.com/i/js_inst?c_name=ui_metrics"
         )
 
         def _get_ui_metrics(js_inst: str) -> Dict[str, Any]:
@@ -1767,6 +1774,18 @@ class Client(BaseHTTPClient):
             },
         ]
 
+        return await self._complete_subtask(flow_token, inputs, auth=False)
+
+    async def _login_enter_alternative_user_identifier(self, flow_token: str):
+        inputs = [
+            {
+                "subtask_id": "LoginEnterAlternateIdentifierSubtask",
+                "enter_text": {
+                    "link": "next_link",
+                    "text": self.account.email.mail,
+                },
+            }
+        ]
         return await self._complete_subtask(flow_token, inputs, auth=False)
 
     async def _login_enter_user_identifier(self, flow_token: str):
@@ -1938,13 +1957,17 @@ class Client(BaseHTTPClient):
 
         subtask_ids = {subtask.id for subtask in subtasks}
         if "LoginEnterAlternateIdentifierSubtask" in subtask_ids:
-            if not self.account.username:
+            if not self.account.email.mail:
                 self.account.status = AccountStatus.NOT_FOUND
-                raise TwitterException("Failed to login: no username to relogin")
+                raise TwitterException("Failed to login: no mail to relogin")
+
+            flow_token, subtasks = await self._login_enter_alternative_user_identifier(
+                flow_token
+            )
 
         await sleep(2, 5)
         flow_token, subtasks = await self._login_enter_password(flow_token)
-        flow_token, subtasks = await self._account_duplication_check(flow_token)
+        # flow_token, subtasks = await self._account_duplication_check(flow_token)
 
         for subtask in subtasks:
             if subtask.id == "LoginAcid":
@@ -2020,7 +2043,7 @@ class Client(BaseHTTPClient):
         await self._complete_subtask(flow_token, [])
         return update_backup_code
 
-    @retry(retry_times=1)
+    # @retry(retry_times=1)
     async def relogin(self):
         """
         Может вызвать следующую ошибку:
