@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "tweepy-self"
-version = "1.11.1"
+version = "1.11.2"
 description = "Twitter (selfbot) for Python!"
 authors = ["Alen <alen.kimov@gmail.com>"]
 readme = "README.md"
@@ -12,7 +12,7 @@ Source = "https://github.com/alenkimov/tweepy-self"
 
 [tool.poetry.dependencies]
 python = "^3.11"
-curl_cffi = "^0.7.1"
+curl_cffi = ">=0.9.0b2, <0.10"
 better-proxy = "^1.1"
 beautifulsoup4 = "^4"
 pydantic = "^2"
